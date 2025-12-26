@@ -1,0 +1,21 @@
+window:
+  x: 200
+  y: 100
+
+reminders:
+  - type: interval
+    minutes: 30
+    text: "该起来活动一下啦 🧘"
+
+server:
+  host: 0.0.0.0
+  port: 9000
+
+ui:
+  bubble:
+    max_width: 350
+    padding: 12
+    font_size: 18
+  gif:
+    max_width: 350
+    max_height: 350

@@ -1,0 +1,22 @@
+friend_avatar: /home/yxd/Desktop/head sculpture.jpg
+my_avatar: /home/yxd/Desktop/head sculpture.jpg
+reminders:
+- minutes: 30
+  text: 该起来活动一下啦 🧘
+  type: interval
+server:
+  host: 0.0.0.0
+  port: 9001
+target_ip: 127.0.0.1:9000
+ui:
+  bubble:
+    font_size: 18
+    max_width: 350
+    padding: 12
+  gif:
+    max_height: 350
+    max_width: 350
+user_id: a0dbc93b2e4840f795881cc3a457b68a
+window:
+  x: 200
+  y: 100
