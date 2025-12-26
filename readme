@@ -1,267 +1,111 @@
-好，这里我直接给你一个「完整可运行」的桌面小助手项目骨架，clone / 复制后 **立刻能在 Windows / Linux 跑起来**，具备：
+DeskBuddy 🤖
+DeskBuddy is a lightweight, extensible desktop assistant framework built with Python and PySide6. It features a floating animated avatar that sits on your screen, manages scheduled reminders, and listens for remote commands via HTTP.
 
-✅ 桌面角落悬浮
-✅ 卡通形象（GIF）
-✅ 定时提醒
-✅ HTTP 远程触发提醒
-✅ 可扩展结构（后面加 AI / 语音 / Live2D 都不推翻）
+Designed with a modular architecture, it serves as a perfect foundation for building advanced AI assistants, VTubers, or productivity companions.
 
-我会按 **真实工程结构** 来给你，而不是零散 demo。
+✨ Key Features
+🎈 Floating Widget: A frameless, transparent, always-on-top window that sits quietly in your desktop corner.
 
----
+🎞️ Animated Avatar: Supports GIF playback (easy to swap with your own assets).
 
-# 一、项目结构（最终效果）
+⏰ Built-in Scheduler: Configure recurring reminders (e.g., "Drink water") via a simple YAML file.
 
-```
+⚡ Remote Control: Embedded Flask server allows you to trigger events/reminders from external scripts, webhooks, or other devices.
+
+🧩 Modular Design: Clean separation of concerns (UI, Logic, Server, Config) making it easy to integrate LLMs (OpenAI/Claude), TTS, or Live2D later.
+
+📂 Project Structure
+Plaintext
+
 deskbuddy/
-├── main.py                 # 程序入口
-├── requirements.txt
-├── README.md
+├── main.py                 # Application Entry Point
+├── requirements.txt        # Python Dependencies
+├── README.md               # Documentation
+├── config.yaml             # User Configuration
 │
 ├── app/
 │   ├── __init__.py
-│   ├── config.py           # 配置加载
-│   ├── scheduler.py        # 定时任务
-│   ├── server.py           # HTTP 远程控制
+│   ├── config.py           # Configuration Loader
+│   ├── scheduler.py        # Background Task Manager (APScheduler)
+│   ├── server.py           # HTTP API Server (Flask)
 │   └── ui/
 │       ├── __init__.py
-│       └── assistant.py    # 桌面悬浮助手窗口
+│       └── assistant.py    # PySide6 Floating Window Logic
 │
-├── assets/
-│   └── assistant.gif       # 卡通形象（你可以换）
-│
-└── config.yaml             # 用户配置
-```
+└── assets/
+    └── assistant.gif       # Your Avatar (Replace this!)
+🚀 Getting Started
+1. Prerequisites
+Python 3.8+
 
----
+Windows, macOS, or Linux
 
-# 二、依赖安装
+2. Installation
+Clone the repository and install the dependencies:
 
-## requirements.txt
+Bash
 
-```txt
-PySide6
-Flask
-APScheduler
-PyYAML
-```
-
-安装：
-
-```bash
+git clone https://github.com/your-username/deskbuddy.git
+cd deskbuddy
 pip install -r requirements.txt
-```
+3. Configuration
+Edit config.yaml to customize your assistant's position and scheduled tasks:
 
----
+YAML
 
-# 三、配置文件（config.yaml）
-
-```yaml
 window:
-  x: 1600
-  y: 800
+  x: 1600  # Horizontal position on screen
+  y: 800   # Vertical position on screen
 
 reminders:
   - type: interval
     minutes: 30
-    text: "该起来活动一下啦 🧘"
+    text: "Time to stretch! 🧘"
 
 server:
   host: 0.0.0.0
   port: 9000
-```
+4. Run
+Start the assistant:
 
----
+Bash
 
-# 四、核心代码
-
-## 1️⃣ main.py（入口）
-
-```python
-import sys
-import threading
-from PySide6.QtWidgets import QApplication
-
-from app.config import load_config
-from app.ui.assistant import AssistantWindow
-from app.scheduler import start_scheduler
-from app.server import start_server
-
-
-def main():
-    config = load_config()
-
-    app = QApplication(sys.argv)
-
-    assistant = AssistantWindow(
-        gif_path="assets/assistant.gif",
-        x=config["window"]["x"],
-        y=config["window"]["y"],
-    )
-    assistant.show()
-
-    # 定时任务
-    start_scheduler(config, assistant)
-
-    # HTTP server（后台线程）
-    threading.Thread(
-        target=start_server,
-        args=(config, assistant),
-        daemon=True,
-    ).start()
-
-    sys.exit(app.exec())
-
-
-if __name__ == "__main__":
-    main()
-```
-
----
-
-## 2️⃣ app/config.py
-
-```python
-import yaml
-
-
-def load_config(path="config.yaml"):
-    with open(path, "r", encoding="utf-8") as f:
-        return yaml.safe_load(f)
-```
-
----
-
-## 3️⃣ app/ui/assistant.py（桌面悬浮窗口）
-
-```python
-from PySide6.QtWidgets import QLabel, QWidget
-from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QMovie
-
-
-class AssistantWindow(QWidget):
-    def __init__(self, gif_path, x, y):
-        super().__init__()
-
-        self.setWindowFlags(
-            Qt.FramelessWindowHint
-            | Qt.WindowStaysOnTopHint
-            | Qt.Tool
-        )
-        self.setAttribute(Qt.WA_TranslucentBackground)
-
-        self.label = QLabel(self)
-        self.movie = QMovie(gif_path)
-        self.label.setMovie(self.movie)
-        self.movie.start()
-
-        self.resize(200, 200)
-        self.move(x, y)
-
-        self.hide_timer = QTimer()
-        self.hide_timer.timeout.connect(self.hide)
-
-    def remind(self, text, duration=5000):
-        print(f"[REMIND] {text}")
-        self.show()
-        self.raise_()
-        self.hide_timer.start(duration)
-```
-
-> ⚠️ 现在提醒是 `print`，后面你可以加：
-
-* 气泡
-* TTS
-* 动画切换
-
----
-
-## 4️⃣ app/scheduler.py（定时提醒）
-
-```python
-from apscheduler.schedulers.background import BackgroundScheduler
-
-
-def start_scheduler(config, assistant):
-    scheduler = BackgroundScheduler()
-
-    for r in config.get("reminders", []):
-        if r["type"] == "interval":
-            scheduler.add_job(
-                assistant.remind,
-                "interval",
-                minutes=r["minutes"],
-                args=[r["text"]],
-            )
-
-    scheduler.start()
-```
-
----
-
-## 5️⃣ app/server.py（远程控制）
-
-```python
-from flask import Flask, request, jsonify
-
-app = Flask(__name__)
-assistant_ref = None
-
-
-@app.route("/remind", methods=["POST"])
-def remind():
-    data = request.json or {}
-    text = data.get("text", "提醒你一下～")
-    assistant_ref.remind(text)
-    return jsonify({"status": "ok"})
-
-
-def start_server(config, assistant):
-    global assistant_ref
-    assistant_ref = assistant
-
-    app.run(
-        host=config["server"]["host"],
-        port=config["server"]["port"],
-    )
-```
-
----
-
-# 五、运行方式
-
-```bash
 python main.py
-```
+📡 Remote Control (API)
+DeskBuddy runs a local HTTP server (default port 9000). You can send POST requests to trigger the assistant from anywhere (CI/CD pipelines, smart home devices, or other scripts).
 
-然后远程触发：
+Endpoint: POST /remind
 
-```bash
+Example using cURL:
+
+Bash
+
 curl -X POST http://127.0.0.1:9000/remind \
   -H "Content-Type: application/json" \
-  -d '{"text":"喝水时间到啦 💧"}'
-```
+  -d '{"text": "Meeting starts in 5 minutes! 📅"}'
+🛠️ Customization
+Change the Avatar
+Simply replace assets/assistant.gif with any transparent GIF of your choice.
 
----
+Add Logic
+UI Logic: Edit app/ui/assistant.py to change window behavior or add animations.
 
-# 六、你已经拥有了什么？
+Background Tasks: Edit app/scheduler.py to add complex cron jobs.
 
-✔ 一个真正的桌面悬浮助手
-✔ 可定时
-✔ 可远程
-✔ 跨平台
-✔ 工程结构干净
-✔ 适合继续扩展
+🗺️ Roadmap
+This project is currently a skeleton. Future updates will include:
 
----
+[ ] Speech Bubbles: Comic-style dialog boxes for notifications.
 
-甚至可以帮我做的
+[ ] System Tray: Minimize to tray with a right-click context menu.
 
-1️⃣ **提醒气泡（漫画对话框）**
-2️⃣ **系统托盘图标（右键菜单）**
-3️⃣ **真人 → 卡通形象生成**
-4️⃣ **多状态动画（idle / talk / happy）**
-5️⃣ **语音提醒（TTS）**
-6️⃣ **远程鉴权（token）**
+[ ] State Management: Support for multiple animations (Idle, Talking, Sleeping).
 
+[ ] Voice Support: Integration with TTS (Text-to-Speech) engines.
+
+[ ] AI Integration: Connect to LLMs to make the assistant conversational.
+
+[ ] Security: API Token authentication for remote requests.
+
+📄 License
+MIT License. Feel free to use this as a base for your own projects!
