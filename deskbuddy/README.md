@@ -103,9 +103,13 @@ python scripts/smoke.py .venv/bin/python main.py
 
 `smoke.py` 支持传入打包后的可执行文件，使用独立配置、临时工作目录和有限超时（Linux 30 秒，macOS 首次启动 90 秒，30 秒时记录堆栈诊断），验证启动、GIF、真实 HTTP 握手与提醒、Qt 信号处理和服务退出。Linux 使用 offscreen 插件；macOS 使用原生 Cocoa 插件。
 
-本次已在 Linux / Python 3.12 上运行回归测试，完成 PyInstaller 实际构建，并验证源码及打包程序的启动和 HTTP/GUI 链路。macOS 构建工作流已配置但尚未执行，当前工作环境没有 Mac，不能据此声称 macOS 稳定性已通过验收。
+本次已在 Linux / Python 3.12 上运行回归测试，完成 PyInstaller 实际构建，并验证源码及打包程序的启动和 HTTP/GUI 链路。
 
-Mac 实机待验收：
+Apple Silicon 和 Intel 两个版本也已在云端 macOS 15 上完成实际构建，均通过 54 项回归测试、原生 Cocoa 应用启动、GIF 加载、HTTP 握手/提醒、Qt 信号处理、退出及签名结构检查。产物包含 Python 运行库，使用者不需要安装 Python。可在[已通过的构建任务](https://github.com/littleEast7/chatbot2/actions/runs/44455510922)下载对应架构的安装包。该任务构建的代码提交为 `cc425dd`。
+
+云端观察到首次启动检查可能超过 30 秒，因此保留了 90 秒的有限检查窗口及超时堆栈诊断。这些自动检查不替代用户实际电脑上的长期运行验收，也不代表已完成 Apple Developer ID 签名或公证。
+
+用户 Mac 实机待验收（云端已通过上述自动检查）：
 
 1. 两种芯片分别构建并从 Finder 双击启动，移动到 Applications 后仍能读写配置并播放 GIF。
 2. 中文输入法、Retina 显示、多显示器、窗口关闭后进程退出。
