@@ -11,3 +11,5 @@ bash deskbuddy/scripts/build_macos.sh
 ```
 
 输出 `.app` 及对应芯片的 ZIP。仓库也提供 [Apple Silicon / Intel 自动构建流程](.github/workflows/macos-build.yml)。macOS 实机验证及正式签名、公证状态见项目说明。
+
+Ubuntu 24.04 提供 amd64 和 arm64 的独立 `.deb` / `.tar.gz`，无需安装 Python。构建运行 `bash deskbuddy/scripts/build_ubuntu.sh`，详见 [Ubuntu 使用说明](deskbuddy/README.md#ubuntu-独立应用) 和 [自动构建流程](.github/workflows/ubuntu-build.yml)。

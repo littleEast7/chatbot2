@@ -42,6 +42,30 @@ PYTHON_BIN=python3.12 bash scripts/build_macos.sh
 
 仓库的 [macOS 构建工作流](../.github/workflows/macos-build.yml) 配置了两种架构的 runner。代码推送到 GitHub 后，可在 Actions → Build macOS app 中运行，并从成功任务的 Artifacts 下载 ZIP。工作流只有在回归测试、打包、产物启动检查及签名结构检查通过后才上传产物。
 
+## Ubuntu 独立应用
+
+提供 Ubuntu 24.04 Desktop 的 `amd64` 和 `arm64` 两种架构。`amd64` 用于 Intel/AMD 电脑；`arm64` 用于 ARM 电脑或 MacBook Neo 上的 Ubuntu ARM 虚拟机。应用内置 Python 和 Qt，使用者不需要安装 Python。
+
+安装 `.deb`（以 amd64 为例，ARM 版本将文件名换为 arm64）：
+
+```bash
+sudo apt install ./deskbuddy_0.2.0_amd64.deb
+```
+
+安装后在应用菜单中打开 DeskBuddy，也可运行 `deskbuddy`。卸载使用 `sudo apt remove deskbuddy`。配置和日志保留在 `~/.local/share/DeskBuddy/`，或设置的 `$XDG_DATA_HOME/DeskBuddy/`。
+
+也可下载 `DeskBuddy-Ubuntu-24.04-amd64.tar.gz` / `DeskBuddy-Ubuntu-24.04-arm64.tar.gz`，完整解压后运行其中的 `DeskBuddy/DeskBuddy`，不要移走同目录下的 `_internal`。压缩包适合已有标准图形库的 Ubuntu Desktop；`.deb` 会声明并由 apt 安装所需系统图形库。中文字体推荐 `fonts-noto-cjk`。
+
+本机构建（需 Ubuntu 24.04、Python 3.12 和 Qt 所需系统图形库）：
+
+```bash
+bash scripts/build_ubuntu.sh
+```
+
+产物在仓库根目录 `.artifacts/ubuntu/amd64/` 或 `.artifacts/ubuntu/arm64/`。构建脚本运行回归测试、PyInstaller 打包、实际二进制启动检查，并生成 `.deb` 及 `.tar.gz`。Linux 产物不包含未支持的 TIFF 头像插件，避免依赖 Ubuntu 24.04 已不提供的 `libtiff.so.5`。
+
+[Ubuntu 构建工作流](../.github/workflows/ubuntu-build.yml) 使用两种架构的原生 runner，并在全新的 Ubuntu 24.04 容器内安装生成的 `.deb`，确认系统没有 Python，再使用 Xvfb/X11 验证 GUI、GIF、HTTP 握手/提醒及退出。此检查不等于已验证所有 Wayland 桌面、输入法或休眠唤醒场景。
+
 ## 配置和日志
 
 macOS 打包版本的配置、头像缓存和日志位于：

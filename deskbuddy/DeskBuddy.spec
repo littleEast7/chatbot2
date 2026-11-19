@@ -12,6 +12,10 @@ a = Analysis(
     hookspath=[], hooksconfig={}, runtime_hooks=[], excludes=[],
     noarchive=False, optimize=0,
 )
+if sys.platform == 'linux':
+    # TIFF is not a supported avatar format. Its optional Qt plugin requires
+    # libtiff.so.5, which is absent on Ubuntu 24.04 (the OS ships libtiff.so.6).
+    a.binaries = [entry for entry in a.binaries if not entry[0].endswith('/libqtiff.so')]
 pyz = PYZ(a.pure)
 exe = EXE(
     pyz, a.scripts, [], exclude_binaries=True, name='DeskBuddy',
