@@ -1,15 +1,22 @@
+"""Print dependency diagnostics and return a useful process status."""
+import importlib
+import importlib.metadata
 import sys
-try:
-    import PySide6
-    import yaml
-    import apscheduler
-    import flask
-    with open("env_check.txt", "w") as f:
-        f.write("SUCCESS")
-except ImportError as e:
-    with open("env_check.txt", "w") as f:
-        f.write(f"ERROR: {e}")
-except Exception as e:
-    with open("env_check.txt", "w") as f:
-        f.write(f"EXCEPTION: {e}")
 
+
+def main():
+    failed = False
+    for module, package in (("PySide6", "PySide6"), ("yaml", "PyYAML"),
+                            ("apscheduler", "APScheduler"), ("flask", "Flask"),
+                            ("requests", "requests")):
+        try:
+            importlib.import_module(module)
+            print(f"OK {package} {importlib.metadata.version(package)}")
+        except (ImportError, importlib.metadata.PackageNotFoundError) as exc:
+            print(f"ERROR {package}: {exc}", file=sys.stderr)
+            failed = True
+    return int(failed)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

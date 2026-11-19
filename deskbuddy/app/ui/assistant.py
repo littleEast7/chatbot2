@@ -31,6 +31,7 @@ class AssistantWindow(QWidget):
         # Message Bubble
         self.bubble = QLabel(self)
         self.bubble.setWordWrap(True)
+        self.bubble.setTextFormat(Qt.PlainText)
 
         # Apply bubble config
         max_width = bubble_config.get("max_width", 200)
@@ -45,7 +46,7 @@ class AssistantWindow(QWidget):
                 border-radius: 12px;
                 padding: {padding}px;
                 color: #333333;
-                font-family: "Microsoft YaHei", "WenQuanYi Micro Hei", "Noto Sans CJK SC", "SimHei", "Segoe UI", sans-serif;
+                font-family: "PingFang SC", "Heiti SC", "Microsoft YaHei", "WenQuanYi Micro Hei", "Noto Sans CJK SC", "SimHei", "Segoe UI", sans-serif;
                 font-size: {font_size}px;
                 font-weight: 500;
             }}
@@ -79,12 +80,15 @@ class AssistantWindow(QWidget):
 
         self.gif_label.setMovie(self.movie)
         self.movie.start()
+        if not self.movie.isValid():
+            self.gif_label.setText("🤖 DeskBuddy")
 
         # Center the GIF
         self.gif_label.setAlignment(Qt.AlignCenter)
         self.layout.addWidget(self.gif_label)
 
-        self.hide_timer = QTimer()
+        self.hide_timer = QTimer(self)
+        self.hide_timer.setSingleShot(True)
         self.hide_timer.timeout.connect(self.hide)
 
     def remind(self, text, duration=5000):

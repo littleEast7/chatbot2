@@ -1,0 +1,14 @@
+.venv/
+.venv-build/
+**/.venv-build/
+.artifacts/
+.artifacts-build.log
+__pycache__/
+*.py[cod]
+.pytest_cache/
+build/
+dist/
+cache/
+*.log
+.DS_Store
+.idea/

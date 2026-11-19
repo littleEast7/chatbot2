@@ -1,131 +1,133 @@
-import sys
-import threading
+"""DeskBuddy desktop entry point (source and frozen application)."""
 import argparse
+import logging
+from logging.handlers import RotatingFileHandler
 import os
+from pathlib import Path
+import sys
 import uuid
-import shutil
-from PySide6.QtWidgets import QApplication
 
-from app.config import load_config
-from app.ui.assistant import AssistantWindow
-from app.ui.chat import ChatWindow
+from PySide6.QtCore import QTimer
+from PySide6.QtWidgets import QApplication, QMessageBox
+
+from app.config import load_config, save_config, valid_port
+from app.paths import config_path, data_dir, resource_path
 from app.scheduler import start_scheduler
 from app.server import start_server
+from app.ui.assistant import AssistantWindow
+from app.ui.chat import ChatWindow
 
 
 def main():
-    # Parse command line arguments
     parser = argparse.ArgumentParser(description="DeskBuddy")
-    parser.add_argument("--port", type=int, help="Server port to listen on")
-    args, unknown = parser.parse_known_args()
+    parser.add_argument("--port", type=int, help="Server port (1–65535)")
+    parser.add_argument("--config", type=Path, help="Explicit configuration file")
+    parser.add_argument("--smoke-test", action="store_true", help="Run startup, HTTP and GUI checks, then exit")
+    args, _ = parser.parse_known_args()
+    if args.port is not None and not valid_port(args.port):
+        parser.error("--port must be between 1 and 65535")
 
-    # Determine config file
-    config_path = "config.yaml"
-    if args.port:
-        config_path = f"config_{args.port}.yaml"
-        if not os.path.exists(config_path):
-            if os.path.exists("config.yaml"):
-                shutil.copy("config.yaml", config_path)
-            else:
-                # Create empty or default if needed, but load_config might fail if file missing
-                pass
-
-    try:
-        config = load_config(config_path)
-    except FileNotFoundError:
-        # Fallback or create default
-        config = {"server": {"host": "0.0.0.0", "port": 9000}, "ui": {}}
-
-    # Ensure user_id exists
-    if "user_id" not in config:
-        config["user_id"] = uuid.uuid4().hex
-        # Save it back immediately
-        with open(config_path, "w", encoding="utf-8") as f:
-            import yaml
-            yaml.dump(config, f, allow_unicode=True)
-
-    # Override port if provided
-    if args.port:
-        config["server"]["port"] = args.port
-        # Also update window title to show port for easier identification
-        window_title_suffix = f" (Port: {args.port})"
-    else:
-        window_title_suffix = ""
-
-    # Attempt to fix input method issues on Linux (e.g. Sougou/Fcitx)
     if sys.platform.startswith("linux"):
-        # Check existing environment variables
-        xmodifiers = os.environ.get("XMODIFIERS", "")
-
-        if "@im=fcitx" in xmodifiers:
-            os.environ.setdefault("QT_IM_MODULE", "fcitx")
-            os.environ.setdefault("GTK_IM_MODULE", "fcitx")
-        elif "@im=ibus" in xmodifiers:
-            os.environ.setdefault("QT_IM_MODULE", "ibus")
-            os.environ.setdefault("GTK_IM_MODULE", "ibus")
-        else:
-            # Default fallback to fcitx as requested by user (Sougou usually uses fcitx)
-            os.environ.setdefault("QT_IM_MODULE", "fcitx")
-            os.environ.setdefault("GTK_IM_MODULE", "fcitx")
-            os.environ.setdefault("XMODIFIERS", "@im=fcitx")
+        modifiers = os.environ.get("XMODIFIERS", "")
+        for method in ("fcitx", "ibus"):
+            if f"@im={method}" in modifiers:
+                os.environ.setdefault("QT_IM_MODULE", method)
 
     app = QApplication(sys.argv)
+    app.setApplicationName("DeskBuddy")
+    app.setOrganizationName("DeskBuddy")
+    scheduler = server = None
+    try:
+        log_path = data_dir() / "deskbuddy.log"
+        logging.basicConfig(level=logging.INFO, handlers=[RotatingFileHandler(
+            log_path, maxBytes=2 * 1024 * 1024, backupCount=3, encoding="utf-8")])
+        path = args.config.resolve() if args.config else config_path(args.port)
+        # A new port profile inherits settings, but receives its own peer identity.
+        base = config_path()
+        if args.port and not args.config and not path.exists() and base.exists():
+            config = load_config(base)
+            config.pop("user_id", None)
+        else:
+            config = load_config(path)
+        if args.port is not None:
+            config["server"]["port"] = args.port
+        config.setdefault("user_id", uuid.uuid4().hex)
+        save_config(config, path)
 
-    # Ensure app quits when the last visible window (ChatWindow) is closed
-    # AssistantWindow might be hidden, so it shouldn't prevent quit if it's the only one left?
-    # Actually AssistantWindow is a Tool window, so it might not count.
-    # Let's be explicit.
+        assistant = AssistantWindow(str(resource_path("assets/assistant.gif")), config)
+        if not assistant.movie.isValid():
+            raise ValueError("助手 GIF 资源缺失或损坏")
+        geometry = app.primaryScreen().availableGeometry()
+        width = min(geometry.width(), config["ui"]["gif"]["max_width"] + 30)
+        height = min(geometry.height(), config["ui"]["gif"]["max_height"] + 160)
+        assistant.resize(width, height)
+        position = config.get("window", {})
+        if not isinstance(position, dict):
+            raise ValueError("window 必须是对象")
+        x = position.get("x", geometry.right() - width - 20)
+        y = position.get("y", geometry.bottom() - height - 20)
+        if not isinstance(x, int) or not isinstance(y, int):
+            raise ValueError("window.x 和 window.y 必须是整数")
+        assistant.move(max(geometry.left(), min(x, geometry.right() - width + 1)),
+                       max(geometry.top(), min(y, geometry.bottom() - height + 1)))
+        chat = ChatWindow(config, config_path=path)
+        chat.setWindowTitle(f"DeskBuddy — {config['server']['port']}")
+        # Only display windows after every service has started successfully.
+        server = start_server(config, assistant, chat)
+        scheduler = start_scheduler(config, assistant)
+        chat.show()
+        assistant.start_greeting()
 
-    # Calculate position (Bottom Right)
-    screen_geometry = app.primaryScreen().availableGeometry()
-    screen_width = screen_geometry.width()
-    screen_height = screen_geometry.height()
+        if args.smoke_test:
+            def smoke_test():
+                try:
+                    import requests
+                    from app.network import sender_address
+                    port = config["server"]["port"]
+                    host = config["server"]["host"]
+                    if host in ("0.0.0.0", "::"):
+                        host = "127.0.0.1" if host == "0.0.0.0" else "::1"
+                    endpoint = "http://" + sender_address(host, port)
+                    token = config["server"].get("token")
+                    headers = {"Authorization": f"Bearer {token}"} if token else {}
+                    with requests.Session() as session:
+                        session.trust_env = False
+                        for route, payload in (("handshake", {"port": port}),
+                                               ("remind", {"text": "DeskBuddy smoke test", "port": port})):
+                            response = session.post(f"{endpoint}/{route}", json=payload,
+                                                    headers=headers, timeout=3)
+                            response.raise_for_status()
+                            assert response.json()["status"] == "ok"
+                    # Deliver worker signals to Qt before checking UI state.
+                    QTimer.singleShot(150, verify_ui)
+                except Exception:
+                    logging.exception("Smoke test failed")
+                    app.exit(1)
 
-    # Fixed width for the assistant window
-    window_width = 300
-    # Height can vary, but we set a reasonable max or initial height
-    window_height = 400
-
-    x = screen_width - window_width - 20
-    y = screen_height - window_height - 20
-
-    assistant = AssistantWindow(
-        gif_path="assets/assistant.gif",
-        config=config
-    )
-    assistant.resize(window_width, window_height)
-    assistant.move(x, y)
-    assistant.start_greeting()
-
-    # Chat Window (Main Control Interface)
-    chat_window = ChatWindow(config, config_path=config_path)
-    if window_title_suffix:
-        chat_window.setWindowTitle(chat_window.windowTitle() + window_title_suffix)
-    chat_window.show()
-
-    # 定时任务
-    scheduler = start_scheduler(config, assistant)
-
-    # HTTP server（后台线程）
-    threading.Thread(
-        target=start_server,
-        args=(config, assistant, chat_window),
-        daemon=True,
-    ).start()
-
-    # Graceful exit
-    def cleanup():
-        print("Shutting down scheduler...")
-        scheduler.shutdown()
-        print("Bye!")
-
-    app.aboutToQuit.connect(cleanup)
-
-    if sys.platform.startswith("linux"):
-        print("提示: 如果无法使用搜狗输入法，请尝试运行: export QT_IM_MODULE=fcitx && python main.py")
-
-    sys.exit(app.exec())
+            def verify_ui():
+                try:
+                    assert assistant.bubble.text() == "DeskBuddy smoke test"
+                    assert chat.ip_input.text()
+                    assert chat.chat_layout.count() >= 3
+                    assert assistant.movie.isValid()
+                    logging.info("SMOKE_TEST_OK")
+                    app.exit(0)
+                except Exception:
+                    logging.exception("Smoke UI check failed")
+                    app.exit(1)
+            QTimer.singleShot(200, smoke_test)
+        return app.exec()
+    except Exception as exc:
+        logging.exception("Startup failed")
+        if not args.smoke_test:
+            QMessageBox.critical(None, "DeskBuddy 启动失败", f"{exc}\n\n请检查配置、端口和日志。")
+        return 1
+    finally:
+        if scheduler is not None:
+            scheduler.shutdown(wait=False)
+        if server is not None:
+            server.shutdown()
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

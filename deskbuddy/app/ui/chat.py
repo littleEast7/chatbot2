@@ -6,13 +6,21 @@ from PySide6.QtGui import QColor, QFont, QIcon, QPixmap, QPainter, QPainterPath
 import requests
 import threading
 import os
-import yaml
+import json
+import hashlib
+import logging
+from pathlib import Path
+from app.config import save_config as persist_config
+from app.paths import data_dir
+from app.network import peer_target, sender_address as format_sender
+from app.server import MAX_AVATAR_BYTES
 import base64
 
 class ChatWindow(QWidget):
     # Signal to update UI from background threads
     message_received = Signal(str, str)
     connection_status_changed = Signal(bool, str)
+    avatar_received = Signal(str, str, str)
 
     def __init__(self, config, config_path="config.yaml"):
         super().__init__()
@@ -28,6 +36,8 @@ class ChatWindow(QWidget):
         # "friend_avatar" is the connected friend's avatar (received via handshake)
         self.friend_avatar_path = None
         self.default_avatar_color = "#E5E5EA"
+        self.avatar_received.connect(self._save_friend_avatar, Qt.QueuedConnection)
+        self._network_slots = threading.BoundedSemaphore(4)
 
 
         # Main Layout
@@ -125,6 +135,8 @@ class ChatWindow(QWidget):
         self.connected_avatar = QPushButton()
         self.connected_avatar.setFixedSize(40, 40)
         self.connected_avatar.setStyleSheet("border: none; background-color: transparent;")
+        self.connected_avatar.setToolTip("点击切换连接地址")
+        self.connected_avatar.clicked.connect(lambda: self._handle_connection_status(False, ""))
         self.connected_avatar.hide()
         header_layout.addWidget(self.connected_avatar)
 
@@ -233,14 +245,11 @@ class ChatWindow(QWidget):
             return
 
         self.add_message_item(f"正在连接 {target_ip}...", is_me=False, is_system=True)
-        threading.Thread(target=self._send_handshake_http, args=(target_ip,)).start()
+        self._start_worker(self._send_handshake_http, target_ip)
 
     def _send_handshake_http(self, address):
         try:
-            if ":" in address:
-                target = address
-            else:
-                target = f"{address}:9000"
+            target = peer_target(address)
 
             url = f"http://{target}/handshake"
             local_port = self.config.get("server", {}).get("port", 9000)
@@ -251,7 +260,9 @@ class ChatWindow(QWidget):
             if self.current_avatar_path and os.path.exists(self.current_avatar_path):
                 try:
                     with open(self.current_avatar_path, "rb") as f:
-                        avatar_data = base64.b64encode(f.read()).decode('utf-8')
+                        content = f.read(MAX_AVATAR_BYTES + 1)
+                        if len(content) <= MAX_AVATAR_BYTES:
+                            avatar_data = base64.b64encode(content).decode('ascii')
                 except Exception as e:
                     print(f"Failed to read avatar: {e}")
 
@@ -261,35 +272,23 @@ class ChatWindow(QWidget):
                 "user_id": user_id
             }
 
-            resp = requests.post(url, json=payload, timeout=3)
-
-            if resp.status_code == 200:
-                data = resp.json()
-                friend_avatar_data = data.get("avatar")
-                friend_user_id = data.get("user_id")
-
-                # Save friend avatar if provided
-                if friend_avatar_data:
-                    self._save_friend_avatar(friend_avatar_data, friend_user_id, target)
-
-                self.message_received.emit(f"[系统] 连接成功! 对方已收到您的地址。", "")
-                self.connection_status_changed.emit(True, target)
-            else:
-                self.message_received.emit(f"[系统] 连接失败: {resp.text}", "")
+            data = self._post_peer(url, payload)
+            friend_avatar_data = data.get("avatar")
+            friend_user_id = data.get("user_id")
+            if friend_avatar_data is not None and not isinstance(friend_avatar_data, str):
+                raise ValueError("对方头像数据格式错误")
+            if friend_user_id is not None and (not isinstance(friend_user_id, str) or len(friend_user_id) > 128):
+                raise ValueError("对方用户 ID 格式错误")
+            self.avatar_received.emit(friend_avatar_data or "", friend_user_id or "", target)
+            self.message_received.emit("[系统] 连接成功! 对方已收到您的地址。", "")
+            self.connection_status_changed.emit(True, target)
 
         except Exception as e:
             self.message_received.emit(f"[系统] 连接失败: {e}", "")
 
     def on_handshake_received(self, sender_ip, sender_port, avatar_data=None, user_id=None):
-        sender_address = ""
-        if sender_ip:
-            if sender_port:
-                sender_address = f"{sender_ip}:{sender_port}"
-            else:
-                sender_address = sender_ip
-
-        if avatar_data:
-            self._save_friend_avatar(avatar_data, user_id, sender_address)
+        sender_address = format_sender(sender_ip, sender_port)
+        self.avatar_received.emit(avatar_data or "", user_id or "", sender_address)
 
         # Update UI via signal (reuse message_received for simplicity or create new one)
         # We use a special system message format to trigger config update
@@ -301,6 +300,9 @@ class ChatWindow(QWidget):
             self, "选择头像", "", "Images (*.png *.jpg *.jpeg *.bmp *.gif)"
         )
         if file_path:
+            if not Path(file_path).is_file() or Path(file_path).stat().st_size > MAX_AVATAR_BYTES or QPixmap(file_path).isNull():
+                self.add_message_item("请选择有效且小于 2 MiB 的图片", False, True)
+                return
             self.current_avatar_path = file_path
             self.config["my_avatar"] = file_path
             self.update_avatar_display()
@@ -312,32 +314,72 @@ class ChatWindow(QWidget):
 
         # Persist to file
         try:
-            with open(self.config_path, "w", encoding="utf-8") as f:
-                yaml.dump(self.config, f, allow_unicode=True)
+            persist_config(self.config, self.config_path)
         except Exception as e:
-            print(f"Error saving config: {e}")
+            logging.exception("Error saving config")
+            self.add_message_item(f"配置保存失败: {e}", False, True)
 
+    @Slot(str, str, str)
     def _save_friend_avatar(self, avatar_data, user_id, ip_port_str):
         try:
-            cache_dir = "cache"
-            if not os.path.exists(cache_dir):
-                os.makedirs(cache_dir)
+            if not avatar_data:
+                self.friend_avatar_path = None
+                self.update_avatar_display()
+                return
+            if len(avatar_data) > 4 * ((MAX_AVATAR_BYTES + 2) // 3):
+                raise ValueError("头像过大")
+            content = base64.b64decode(avatar_data, validate=True)
+            if len(content) > MAX_AVATAR_BYTES:
+                raise ValueError("头像过大")
+            pixmap = QPixmap()
+            if not pixmap.loadFromData(content):
+                raise ValueError("头像不是有效图片")
+            cache_dir = data_dir() / "cache"
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            # Never use untrusted peer IDs as filesystem paths.
+            digest = hashlib.sha256((user_id or ip_port_str).encode()).hexdigest()
+            filepath = cache_dir / f"friend_avatar_{digest}.png"
+            if not pixmap.save(str(filepath), "PNG"):
+                raise OSError("头像缓存无法写入")
+            self.friend_avatar_path = str(filepath)
+            self.update_avatar_display()
+        except Exception as exc:
+            logging.warning("Invalid friend avatar: %s", exc)
 
-            # Use user_id for filename if available, else fallback to ip_port
-            if user_id:
-                filename = f"friend_avatar_{user_id}.png"
-            else:
-                # Sanitize ip_port_str
-                safe_str = ip_port_str.replace(":", "_")
-                filename = f"friend_avatar_{safe_str}.png"
+    def _post_peer(self, url, payload):
+        response = requests.post(url, json=payload, headers=self._auth_headers(),
+                                 timeout=3, stream=True)
+        try:
+            response.raise_for_status()
+            chunks = []
+            size = 0
+            for chunk in response.iter_content(65536):
+                size += len(chunk)
+                if size > 3 * 1024 * 1024:
+                    raise ValueError("对方响应过大")
+                chunks.append(chunk)
+            data = json.loads(b"".join(chunks))
+            if not isinstance(data, dict) or data.get("status") != "ok":
+                raise ValueError("对方返回了无效响应")
+            return data
+        finally:
+            response.close()
 
-            filepath = os.path.join(cache_dir, filename)
-            with open(filepath, "wb") as f:
-                f.write(base64.b64decode(avatar_data))
+    def _auth_headers(self):
+        token = self.config.get("server", {}).get("token")
+        return {"Authorization": f"Bearer {token}"} if token else {}
 
-            self.friend_avatar_path = filepath
-        except Exception as e:
-            print(f"Failed to save friend avatar: {e}")
+    def _start_worker(self, callback, *args):
+        if not self._network_slots.acquire(blocking=False):
+            self.add_message_item("请求过多，请稍后重试", False, True)
+            return False
+        def run():
+            try:
+                callback(*args)
+            finally:
+                self._network_slots.release()
+        threading.Thread(target=run, daemon=True, name="DeskBuddy-peer").start()
+        return True
 
     def update_avatar_display(self):
         # Update the header button (My Avatar)
@@ -405,31 +447,38 @@ class ChatWindow(QWidget):
 
         if not text:
             return
+        try:
+            peer_target(target_ip)
+        except ValueError as exc:
+            self.add_message_item(str(exc), False, True)
+            return
         if not target_ip:
             self.add_message_item("请先输入对方IP地址", is_me=False, is_system=True)
             return
 
-        # Clear input
+        if len(text) > 10000:
+            self.add_message_item("消息最多 10000 个字符", False, True)
+            return
+        if not self._start_worker(self._send_http, target_ip, text):
+            return
+
+        # Clear input only when the outgoing worker has been accepted.
         self.msg_input.clear()
 
         # Show locally
         self.add_message_item(text, is_me=True)
 
-        # Send in background
-        threading.Thread(target=self._send_http, args=(target_ip, text)).start()
 
     def _send_http(self, address, text):
         try:
-            if ":" in address:
-                target = address
-            else:
-                target = f"{address}:9000"
+            target = peer_target(address)
 
             url = f"http://{target}/remind"
             local_port = self.config.get("server", {}).get("port", 9000)
-            requests.post(url, json={"text": text, "port": local_port}, timeout=3)
+            self._post_peer(url, {"text": text, "port": local_port})
         except Exception as e:
             self.message_received.emit(f"[系统] 发送失败: {e}", "")
+            self.connection_status_changed.emit(False, "")
 
     def add_message_item(self, text, is_me, is_system=False):
         item_widget = QWidget()
@@ -440,6 +489,8 @@ class ChatWindow(QWidget):
 
         if is_system:
             label = QLabel(text)
+            label.setTextFormat(Qt.PlainText)
+            label.setWordWrap(True)
             label.setAlignment(Qt.AlignCenter)
             label.setStyleSheet("color: #8E8E93; font-size: 12px; font-style: italic; background: transparent;")
             item_layout.addWidget(label)
@@ -466,12 +517,13 @@ class ChatWindow(QWidget):
 
             # Bubble
             bubble = QLabel(text)
+            bubble.setTextFormat(Qt.PlainText)
             bubble.setWordWrap(True)
             bubble.setMaximumWidth(240)
 
             # Font setup
             font = QFont()
-            font.setFamilies(["Microsoft YaHei", "WenQuanYi Micro Hei", "Noto Sans CJK SC", "SimHei", "Arial"])
+            font.setFamilies(["PingFang SC", "Heiti SC", "Microsoft YaHei", "WenQuanYi Micro Hei", "Noto Sans CJK SC", "SimHei", "Arial"])
             font.setPixelSize(15)
             bubble.setFont(font)
 
@@ -502,6 +554,11 @@ class ChatWindow(QWidget):
                 item_layout.addStretch()
 
         self.chat_layout.addWidget(item_widget)
+        # Bound widget memory for long-running sessions.
+        while self.chat_layout.count() > 501:
+            old = self.chat_layout.takeAt(1).widget()
+            if old is not None:
+                old.deleteLater()
 
         # Scroll to bottom
         QTimer.singleShot(10, lambda: self.scroll_area.verticalScrollBar().setValue(
@@ -550,12 +607,7 @@ class ChatWindow(QWidget):
             self.connected_avatar.hide()
 
     def on_message_received(self, text, sender_ip=None, sender_port=None):
-        sender_address = ""
-        if sender_ip:
-            if sender_port:
-                sender_address = f"{sender_ip}:{sender_port}"
-            else:
-                sender_address = sender_ip
+        sender_address = format_sender(sender_ip, sender_port)
         self.message_received.emit(text, sender_address)
 
     def closeEvent(self, event):

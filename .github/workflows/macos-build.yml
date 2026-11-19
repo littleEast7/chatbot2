@@ -1,0 +1,40 @@
+name: Build macOS app
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'deskbuddy/**'
+      - '.github/workflows/macos-build.yml'
+  pull_request:
+    paths:
+      - 'deskbuddy/**'
+      - '.github/workflows/macos-build.yml'
+permissions:
+  contents: read
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            architecture: arm64
+          - runner: macos-15-intel
+            architecture: x64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 25
+    env:
+      MACOSX_DEPLOYMENT_TARGET: '13.0'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          architecture: ${{ matrix.architecture }}
+      - name: Test, build, verify signature, and run bundled app
+        run: bash deskbuddy/scripts/build_macos.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DeskBuddy-macOS-${{ matrix.architecture }}
+          path: deskbuddy/dist/DeskBuddy-macOS-*.zip
+          if-no-files-found: error
