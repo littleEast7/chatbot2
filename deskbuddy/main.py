@@ -7,6 +7,13 @@ from pathlib import Path
 import sys
 import uuid
 
+# Enable stack diagnostics only when the smoke runner explicitly requests them.
+if os.environ.get("DESKBUDDY_SMOKE_STACKS"):
+    import faulthandler
+    _smoke_stacks = open(os.environ["DESKBUDDY_SMOKE_STACKS"], "w")
+    faulthandler.enable(file=_smoke_stacks)
+    faulthandler.dump_traceback_later(30, file=_smoke_stacks)
+
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication, QMessageBox
 
@@ -41,6 +48,7 @@ def main():
         log_path = data_dir() / "deskbuddy.log"
         logging.basicConfig(level=logging.INFO, handlers=[RotatingFileHandler(
             log_path, maxBytes=2 * 1024 * 1024, backupCount=3, encoding="utf-8")])
+        logging.info("QApplication initialized")
         path = args.config.resolve() if args.config else config_path(args.port)
         # A new port profile inherits settings, but receives its own peer identity.
         base = config_path()
@@ -54,6 +62,7 @@ def main():
         config.setdefault("user_id", uuid.uuid4().hex)
         save_config(config, path)
 
+        logging.info("Configuration loaded")
         assistant = AssistantWindow(str(resource_path("assets/assistant.gif")), config)
         if not assistant.movie.isValid():
             raise ValueError("助手 GIF 资源缺失或损坏")
@@ -73,6 +82,7 @@ def main():
         chat = ChatWindow(config, config_path=path)
         chat.setWindowTitle(f"DeskBuddy — {config['server']['port']}")
         # Only display windows after every service has started successfully.
+        logging.info("Windows initialized")
         server = start_server(config, assistant, chat)
         scheduler = start_scheduler(config, assistant)
         chat.show()
@@ -116,6 +126,7 @@ def main():
                     logging.exception("Smoke UI check failed")
                     app.exit(1)
             QTimer.singleShot(200, smoke_test)
+        logging.info("Entering Qt event loop")
         return app.exec()
     except Exception as exc:
         logging.exception("Startup failed")

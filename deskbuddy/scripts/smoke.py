@@ -5,6 +5,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+import time
 
 
 def main():
@@ -22,8 +23,25 @@ def main():
         # Linux verification uses the offscreen plugin; macOS uses native Cocoa.
         if sys.platform.startswith("linux"):
             environment.setdefault("QT_QPA_PLATFORM", "offscreen")
-        subprocess.run(command + ["--config", str(config), "--smoke-test"],
-                       cwd=root, env=environment, check=True, timeout=30)
+        stacks = root / "startup-stacks.log"
+        environment["DESKBUDDY_SMOKE_STACKS"] = str(stacks)
+        # macOS may scan a newly signed bundle on first launch. Keep a finite
+        # allowance and collect a stack trace at 30s to distinguish slow startup
+        # from an application deadlock.
+        timeout = 90 if sys.platform == "darwin" else 30
+        started = time.monotonic()
+        try:
+            subprocess.run(command + ["--config", str(config), "--smoke-test"],
+                           cwd=root, env=environment, check=True, timeout=timeout)
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+            if stacks.exists():
+                print(stacks.read_text(errors="replace"), file=sys.stderr)
+            if sys.platform == "darwin":
+                log = Path.home() / "Library/Application Support/DeskBuddy/deskbuddy.log"
+                if log.exists():
+                    print(log.read_text(errors="replace")[-20000:], file=sys.stderr)
+            raise
+        print(f"Bundled startup and checks completed in {time.monotonic() - started:.1f}s")
     print("Smoke test passed: startup, GIF, handshake, reminder, GUI signals and shutdown")
 
 

@@ -101,7 +101,7 @@ python -m pytest -q
 python scripts/smoke.py .venv/bin/python main.py
 ```
 
-`smoke.py` 支持传入打包后的可执行文件，使用独立配置、临时工作目录和 30 秒超时，验证启动、GIF、真实 HTTP 握手与提醒、Qt 信号处理和服务退出。Linux 使用 offscreen 插件；macOS 使用原生 Cocoa 插件。
+`smoke.py` 支持传入打包后的可执行文件，使用独立配置、临时工作目录和有限超时（Linux 30 秒，macOS 首次启动 90 秒，30 秒时记录堆栈诊断），验证启动、GIF、真实 HTTP 握手与提醒、Qt 信号处理和服务退出。Linux 使用 offscreen 插件；macOS 使用原生 Cocoa 插件。
 
 本次已在 Linux / Python 3.12 上运行回归测试，完成 PyInstaller 实际构建，并验证源码及打包程序的启动和 HTTP/GUI 链路。macOS 构建工作流已配置但尚未执行，当前工作环境没有 Mac，不能据此声称 macOS 稳定性已通过验收。
 
