@@ -66,6 +66,9 @@ bash scripts/build_ubuntu.sh
 
 [Ubuntu 构建工作流](../.github/workflows/ubuntu-build.yml) 使用两种架构的原生 runner，并在全新的 Ubuntu 24.04 容器内安装生成的 `.deb`，确认系统没有 Python，再使用 Xvfb/X11 验证 GUI、GIF、HTTP 握手/提醒及退出。此检查不等于已验证所有 Wayland 桌面、输入法或休眠唤醒场景。
 
+本次 `amd64` 已在本地 Ubuntu 24.04、`arm64` 已在原生 ARM 云端完成构建和 54 项回归测试，两版 `.deb` 均在无系统 Python 的干净 Ubuntu 24.04 容器中通过安装、X11 GUI、GIF、HTTP 通信和退出验证。已检查安装包内嵌 Python、ELF 架构、桌面启动器，且未携带开发配置或头像缓存。云端构建记录见 [Ubuntu 应用构建](https://github.com/littleEast7/chatbot2/actions/runs/44470824347)。
+
+
 ## 配置和日志
 
 macOS 打包版本的配置、头像缓存和日志位于：
